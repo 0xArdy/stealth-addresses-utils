@@ -1,0 +1,19 @@
+{
+  "name": "erc-5564-ts",
+  "private": true,
+  "version": "0.0.1",
+  "license": "MIT",
+  "dependencies": {
+    "@noble/secp256k1": "^2.2.0",
+    "dotenv": "^17.2.0",
+    "ethers": "^6.10.0",
+    "ts-node": "^10.9.2"
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "demo": "ts-node ./scripts/demo.ts",
+    "recover": "ts-node ./scripts/recover.ts",
+    "create-sma": "ts-node ./scripts/createSma.ts",
+    "create-stealth": "ts-node ./scripts/createStealth.ts"
+  }
+}
