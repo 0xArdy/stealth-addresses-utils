@@ -1,47 +1,95 @@
-import { encodeMetaAddress } from "../src/lib/metaAddress";
-import { hexlify, randomBytes } from "ethers";
-import "dotenv/config";
+/**
+ * Create Stealth Meta-Address Script
+ *
+ * Generates a new stealth meta-address that can be shared publicly.
+ * Uses environment variables if provided, otherwise generates random keys.
+ *
+ * Environment variables:
+ * - PREDEFINED_SPEND_PRIVATE_KEY: Use specific spend key
+ * - PREDEFINED_VIEW_PRIVATE_KEY: Use specific view key
+ *
+ * Run with: pnpm create-sma
+ */
 
-async function main() {
-  // Use predefined keys from env if available, otherwise generate random ones
-  const spendPriv =
-    process.env.PREDEFINED_SPEND_PRIVATE_KEY || hexlify(randomBytes(32));
-  const viewPriv =
-    process.env.PREDEFINED_VIEW_PRIVATE_KEY || hexlify(randomBytes(32));
+import 'dotenv/config'
+import {
+  generateKeyPair,
+  derivePublicKey,
+  encodeMetaAddress,
+  SCHEME_ID,
+} from '../src/lib/index'
 
-  console.log(
-    spendPriv === process.env.PREDEFINED_SPEND_PRIVATE_KEY
-      ? "Using predefined spend private key from environment"
-      : "Generated random spend private key"
-  );
-  console.log(
-    viewPriv === process.env.PREDEFINED_VIEW_PRIVATE_KEY
-      ? "Using predefined view private key from environment"
-      : "Generated random view private key"
-  );
-  const secp = await import("@noble/secp256k1");
-  const spendPubBytes = secp.getPublicKey(spendPriv.slice(2), true);
-  const viewPubBytes = secp.getPublicKey(viewPriv.slice(2), true);
-  const spendPub =
-    "0x" +
-    Array.from(spendPubBytes)
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join("");
-  const viewPub =
-    "0x" +
-    Array.from(viewPubBytes)
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join("");
-  const metaAddr = encodeMetaAddress({
-    scheme: 0x02,
-    spendPubkey: spendPub,
-    viewPubkey: viewPub,
-  });
-  console.log("Meta-Address:", metaAddr);
-  console.log("Spend Pub:", spendPub);
-  console.log("View Pub:", viewPub);
-  console.log("Spend Priv:", spendPriv);
-  console.log("View Priv:", viewPriv);
+function main() {
+  console.log('╔═══════════════════════════════════════════════════════════════╗')
+  console.log('║         Create Stealth Meta-Address                           ║')
+  console.log('╚═══════════════════════════════════════════════════════════════╝')
+  console.log()
+
+  // Determine spend key
+  let spendPrivateKey: `0x${string}`
+  let spendPublicKey: `0x${string}`
+
+  if (process.env.PREDEFINED_SPEND_PRIVATE_KEY) {
+    console.log('📌 Using predefined SPEND private key from environment')
+    spendPrivateKey = process.env.PREDEFINED_SPEND_PRIVATE_KEY as `0x${string}`
+    spendPublicKey = derivePublicKey(spendPrivateKey)
+  } else {
+    console.log('🎲 Generating random SPEND keypair')
+    const keypair = generateKeyPair()
+    spendPrivateKey = keypair.privateKey
+    spendPublicKey = keypair.publicKey
+  }
+
+  // Determine view key
+  let viewPrivateKey: `0x${string}`
+  let viewPublicKey: `0x${string}`
+
+  if (process.env.PREDEFINED_VIEW_PRIVATE_KEY) {
+    console.log('📌 Using predefined VIEW private key from environment')
+    viewPrivateKey = process.env.PREDEFINED_VIEW_PRIVATE_KEY as `0x${string}`
+    viewPublicKey = derivePublicKey(viewPrivateKey)
+  } else {
+    console.log('🎲 Generating random VIEW keypair')
+    const keypair = generateKeyPair()
+    viewPrivateKey = keypair.privateKey
+    viewPublicKey = keypair.publicKey
+  }
+
+  console.log()
+  console.log('─'.repeat(65))
+  console.log()
+
+  // Create meta-address
+  const metaAddress = encodeMetaAddress({
+    scheme: SCHEME_ID,
+    spendPubkey: spendPublicKey,
+    viewPubkey: viewPublicKey,
+  })
+
+  // Output results
+  console.log('🔑 Keypairs')
+  console.log('─'.repeat(65))
+  console.log('Spend Private Key:', spendPrivateKey)
+  console.log('Spend Public Key: ', spendPublicKey)
+  console.log('View Private Key: ', viewPrivateKey)
+  console.log('View Public Key:  ', viewPublicKey)
+  console.log()
+
+  console.log('📬 Stealth Meta-Address')
+  console.log('─'.repeat(65))
+  console.log(metaAddress)
+  console.log()
+
+  console.log('⚠️  IMPORTANT: Store your private keys securely!')
+  console.log('   - Never share your private keys')
+  console.log('   - The meta-address can be shared publicly')
+  console.log()
+
+  console.log('💡 To use in other scripts, add to your .env file:')
+  console.log('─'.repeat(65))
+  console.log(`META_ADDRESS=${metaAddress}`)
+  console.log(`SPEND_PRIVATE_KEY=${spendPrivateKey}`)
+  console.log(`VIEW_PRIVATE_KEY=${viewPrivateKey}`)
 }
 
-main().catch(console.error);
+main()

@@ -1,24 +1,86 @@
-// Core stealth address functionality
+/**
+ * stealth-addresses-utils
+ *
+ * TypeScript implementation of ERC-5564 Stealth Addresses for Ethereum privacy.
+ *
+ * @packageDocumentation
+ * @see https://eips.ethereum.org/EIPS/eip-5564
+ */
+
+// ============================================================================
+// Core Stealth Address Functions
+// ============================================================================
+
+export { getSenderStealthAddress, recoverStealthPrivKey } from './stealth'
+
+// ============================================================================
+// Meta-Address Utilities
+// ============================================================================
+
+export { encodeMetaAddress, parseMetaAddress } from './metaAddress'
+
+// ============================================================================
+// Announcement Utilities
+// ============================================================================
+
+export { scanAnnouncements } from './scan'
+
+export { encodeAnnouncementCalldata, encodeMetadataWithViewTag } from './announcerPayload'
+
+export { ANNOUNCER_ABI, ANNOUNCER_ABI_LEGACY } from './announcerAbi'
+
+// ============================================================================
+// Key Generation Utilities
+// ============================================================================
+
 export {
-  getSenderStealthAddress,
-  recoverStealthPrivKey,
-  type SenderDerivationResult,
-  type KeyRecoveryInput,
-} from "./stealth";
+  generateKeyPair,
+  generateStealthKeyPairs,
+  derivePublicKey,
+  bytesToHex,
+  hexToBytes,
+  isValidHex,
+  isValidMetaAddress,
+  padHex,
+} from './utils'
 
-// Meta-address utilities
-export {
-  encodeMetaAddress,
-  parseMetaAddress,
-  type MetaAddress,
-} from "./metaAddress";
-
-// Scanner for announcements
-export { scanAnnouncements, type ScanConfig } from "./scan";
-
+// ============================================================================
 // Constants
-export { ANNOUNCER_SINGLETON, EPHEMERAL_TAG_LEN, SCHEME_ID } from "./constants";
+// ============================================================================
 
-// ABI and payload utilities
-export { ANNOUNCER_ABI } from "./announcerAbi";
-export { encodeAnnouncementCalldata } from "./announcerPayload";
+export {
+  ANNOUNCER_SINGLETON,
+  VIEW_TAG_LENGTH,
+  SCHEME_ID,
+  COMPRESSED_PUBLIC_KEY_LENGTH,
+  PRIVATE_KEY_LENGTH,
+  META_ADDRESS_LENGTH,
+} from './constants'
+
+// ============================================================================
+// Errors
+// ============================================================================
+
+export {
+  StealthAddressError,
+  InvalidMetaAddressError,
+  UnsupportedSchemeError,
+  ViewTagMismatchError,
+  InvalidPrivateKeyError,
+  InvalidPublicKeyError,
+} from './errors'
+
+// ============================================================================
+// Types
+// ============================================================================
+
+export type {
+  MetaAddress,
+  SenderDerivationResult,
+  KeyRecoveryInput,
+  RecoveryResult,
+  ScanConfig,
+  ScanMatch,
+  KeyPair,
+  StealthKeyPairs,
+} from './types'

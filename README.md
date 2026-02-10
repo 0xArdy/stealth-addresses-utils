@@ -1,90 +1,297 @@
-# ERC-5564 Stealth Addresses
+# stealth-addresses-utils
 
-A TypeScript implementation of ERC-5564 stealth addresses.
+TypeScript implementation of [ERC-5564 Stealth Addresses](https://eips.ethereum.org/EIPS/eip-5564) for Ethereum privacy.
 
-## Repository Structure
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue.svg)](https://www.typescriptlang.org/)
+[![viem](https://img.shields.io/badge/viem-2.x-purple.svg)](https://viem.sh/)
 
-```
-├── src/lib/          # Core library functionality
-│   ├── index.ts      # Main exports
-│   ├── stealth.ts    # Core stealth address logic
-│   ├── metaAddress.ts # Meta-address encoding/parsing
-│   ├── scan.ts       # Scanner for announcements
-│   ├── constants.ts  # Protocol constants
-│   ├── announcerAbi.ts # Contract ABI
-│   └── announcerPayload.ts # Payload utilities
-├── scripts/          # Example scripts and demos
-│   ├── demo.ts       # Full demonstration
-│   ├── createSma.ts  # Create stealth meta-address
-│   ├── createStealth.ts # Generate stealth address
-│   └── recover.ts    # Recover stealth private key
-└── package.json      # Dependencies and scripts
-```
+## Features
 
-## Usage
+- **Type-safe** - Full TypeScript support with comprehensive type definitions
+- **Modern** - Built with [viem](https://viem.sh) for optimal Ethereum integration
+- **Lightweight** - Minimal dependencies, tree-shakable
+- **Complete** - Implements full ERC-5564 workflow (generate, derive, recover, scan)
+- **Tested** - Comprehensive test suite with vitest
 
-### Environment Setup
-
-Copy the example environment file and configure your parameters:
+## Installation
 
 ```bash
-cp env.example .env
+# npm
+npm install stealth-addresses-utils
+
+# pnpm
+pnpm add stealth-addresses-utils
+
+# yarn
+yarn add stealth-addresses-utils
 ```
 
-Edit `.env` to set your parameters:
+## Quick Start
 
-- `META_ADDRESS` - Meta-address for generating stealth addresses
-- `VIEW_PRIVATE_KEY` - View private key for recovery
-- `SPEND_PRIVATE_KEY` - Spend private key for recovery
-- `EPHEMERAL_PUBLIC_KEY` - Ephemeral public key for recovery
-- `VIEW_TAG` - View tag for recovery
-- `PREDEFINED_SPEND_PRIVATE_KEY` (optional) - Use specific spend key in create script
-- `PREDEFINED_VIEW_PRIVATE_KEY` (optional) - Use specific view key in create script
+### 1. Generate Stealth Keypairs (Recipient)
 
-### Running Examples
+```typescript
+import { generateStealthKeyPairs, encodeMetaAddress, SCHEME_ID } from 'stealth-addresses-utils'
 
-```bash
-# Run the full demo (uses hardcoded values)
-npm run demo
+// Generate keypairs for receiving stealth payments
+const { spend, view } = generateStealthKeyPairs()
 
-# Create a stealth meta-address (uses env vars if available, otherwise random)
-npm run create-sma
+// Create meta-address to share publicly
+const metaAddress = encodeMetaAddress({
+  scheme: SCHEME_ID, // 0x02 for secp256k1
+  spendPubkey: spend.publicKey,
+  viewPubkey: view.publicKey,
+})
 
-# Generate a stealth address (requires META_ADDRESS env var)
-npm run create-stealth
-
-# Recover a stealth private key (requires recovery env vars)
-npm run recover
+console.log('Share this meta-address:', metaAddress)
+// Store private keys securely!
 ```
 
-### Using the Library
+### 2. Derive Stealth Address (Sender)
+
+```typescript
+import { getSenderStealthAddress } from 'stealth-addresses-utils'
+
+// Alice wants to send funds to Bob
+const result = getSenderStealthAddress(bobMetaAddress)
+
+console.log('Send funds to:', result.stealthAddress)
+console.log('Ephemeral pubkey:', result.ephemPubKey) // for announcement
+console.log('View tag:', result.viewTag) // for announcement
+```
+
+### 3. Recover Stealth Private Key (Recipient)
+
+```typescript
+import { recoverStealthPrivKey } from 'stealth-addresses-utils'
+
+// Bob recovers the private key from announcement data
+const { stealthAddress, stealthPrivKey } = recoverStealthPrivKey({
+  viewPrivKey: bobViewPrivateKey,
+  spendPrivKey: bobSpendPrivateKey,
+  ephemPubKey: announcement.ephemPubKey,
+  viewTag: announcement.viewTag,
+})
+
+// Bob can now spend from stealthAddress using stealthPrivKey
+```
+
+### 4. Full Example with viem
 
 ```typescript
 import {
   getSenderStealthAddress,
-  recoverStealthPrivKey,
-  encodeMetaAddress,
-} from "./src/lib";
+  encodeAnnouncementCalldata,
+  encodeMetadataWithViewTag,
+  ANNOUNCER_SINGLETON,
+} from 'stealth-addresses-utils'
+import { createWalletClient, http, parseEther } from 'viem'
+import { mainnet } from 'viem/chains'
+import { privateKeyToAccount } from 'viem/accounts'
 
-// Your code here...
+const client = createWalletClient({
+  account: privateKeyToAccount('0x...'),
+  chain: mainnet,
+  transport: http(),
+})
+
+// 1. Derive stealth address
+const { stealthAddress, ephemPubKey, viewTag } = getSenderStealthAddress(recipientMetaAddress)
+
+// 2. Send funds
+await client.sendTransaction({
+  to: stealthAddress,
+  value: parseEther('1.0'),
+})
+
+// 3. Publish announcement
+const metadata = encodeMetadataWithViewTag(viewTag)
+const calldata = encodeAnnouncementCalldata(stealthAddress, ephemPubKey, metadata)
+
+await client.sendTransaction({
+  to: ANNOUNCER_SINGLETON,
+  data: calldata,
+})
+```
+
+## API Reference
+
+### Core Functions
+
+| Function                                              | Description                                    |
+| ----------------------------------------------------- | ---------------------------------------------- |
+| [`getSenderStealthAddress`](#getsenderstealthaddress) | Derives a stealth address for a recipient      |
+| [`recoverStealthPrivKey`](#recoverstealthprivkey)     | Recovers the private key for a stealth address |
+| [`encodeMetaAddress`](#encodemetaaddress)             | Encodes a stealth meta-address                 |
+| [`parseMetaAddress`](#parsemetaaddress)               | Parses a stealth meta-address                  |
+| [`scanAnnouncements`](#scanannouncements)             | Scans logs for matching announcements          |
+
+### Utilities
+
+| Function                     | Description                                 |
+| ---------------------------- | ------------------------------------------- |
+| `generateKeyPair`            | Generates a random secp256k1 keypair        |
+| `generateStealthKeyPairs`    | Generates spend + view keypairs             |
+| `derivePublicKey`            | Derives public key from private key         |
+| `encodeAnnouncementCalldata` | Encodes calldata for the Announcer contract |
+| `encodeMetadataWithViewTag`  | Encodes view tag as metadata                |
+
+### Constants
+
+| Constant              | Value           | Description                         |
+| --------------------- | --------------- | ----------------------------------- |
+| `ANNOUNCER_SINGLETON` | `0x5564...5564` | ERC-5564 Announcer contract address |
+| `SCHEME_ID`           | `0x02`          | secp256k1 with view tags            |
+| `VIEW_TAG_LENGTH`     | `1`             | View tag is 1 byte                  |
+
+---
+
+### `getSenderStealthAddress`
+
+Derives a stealth address for a recipient from their meta-address.
+
+```typescript
+function getSenderStealthAddress(metaAddress: string): Promise<SenderDerivationResult>
+```
+
+**Parameters:**
+
+- `metaAddress` - The recipient's stealth meta-address (0x-prefixed, 134 hex chars)
+
+**Returns:**
+
+- `stealthAddress` - The derived EOA address to send funds to
+- `stealthPubKey` - Compressed public key of the stealth address
+- `viewTag` - 1-byte tag for efficient scanning
+- `ephemPubKey` - Ephemeral public key to include in announcement
+- `ephemPrivKey` - Ephemeral private key (keep secret)
+
+**Example:**
+
+```typescript
+const result = await getSenderStealthAddress('0x02...')
+// {
+//   stealthAddress: '0x1234...',
+//   stealthPubKey: '0x02...',
+//   viewTag: '0xab',
+//   ephemPubKey: '0x03...',
+//   ephemPrivKey: '0x...'
+// }
+```
+
+---
+
+### `recoverStealthPrivKey`
+
+Recovers the private key for a stealth address from announcement data.
+
+```typescript
+function recoverStealthPrivKey(input: KeyRecoveryInput): RecoveryResult
+```
+
+**Parameters:**
+
+- `viewPrivKey` - Recipient's view private key
+- `spendPrivKey` - Recipient's spend private key
+- `ephemPubKey` - Ephemeral public key from announcement
+- `viewTag` - View tag from announcement
+
+**Returns:**
+
+- `stealthAddress` - The stealth address
+- `stealthPrivKey` - The recovered private key
+
+**Throws:**
+
+- `ViewTagMismatchError` - If the announcement is not for this recipient
+
+---
+
+### `encodeMetaAddress`
+
+Encodes a stealth meta-address from its components.
+
+```typescript
+function encodeMetaAddress(metaAddress: MetaAddress): string
+```
+
+**Parameters:**
+
+- `scheme` - Scheme ID (must be `0x02`)
+- `spendPubkey` - Compressed spend public key (33 bytes)
+- `viewPubkey` - Compressed view public key (33 bytes)
+
+**Throws:**
+
+- `UnsupportedSchemeError` - If scheme is not `0x02`
+
+---
+
+### `parseMetaAddress`
+
+Parses a stealth meta-address into its components.
+
+```typescript
+function parseMetaAddress(raw: string): MetaAddress
+```
+
+**Throws:**
+
+- `InvalidMetaAddressError` - If the format is invalid
+
+---
+
+### `scanAnnouncements`
+
+Scans announcement logs for stealth payments to a recipient.
+
+```typescript
+function scanAnnouncements(logs: Log[], config: ScanConfig): ScanMatch[]
 ```
 
 ## Scripts
 
-- `npm run demo` - Runs the complete demo showing key generation, stealth address creation, and recovery (uses hardcoded values)
-- `npm run create-sma` - Creates a stealth meta-address (uses env vars if provided, otherwise generates random keys)
-- `npm run create-stealth` - Generates a stealth address from META_ADDRESS environment variable
-- `npm run recover` - Recovers stealth private key using environment variables (VIEW_PRIVATE_KEY, SPEND_PRIVATE_KEY, etc.)
-- `npm run build` - Compiles TypeScript to JavaScript
+The package includes CLI scripts for testing and demonstration:
 
-### Dependencies
+```bash
+# Run full demo (generates keys, derives stealth address, recovers)
+pnpm demo
 
-The scripts automatically load environment variables using the `dotenv` package. Environment variables are loaded from `.env` file.
+# Create a new stealth meta-address
+pnpm create-sma
 
-### Security
+# Derive a stealth address from META_ADDRESS env var
+pnpm create-stealth
 
-⚠️ **Important**: The `.env` file contains private keys and sensitive data. Make sure:
+# Recover private key from announcement data
+pnpm recover
+```
 
-- Never commit `.env` files to version control (already added to `.gitignore`)
-- Use test/development keys only - never production private keys
-- Keep your `.env` file secure and private
+## Environment Variables
+
+Copy `.env.example` to `.env` and configure:
+
+```bash
+# Meta-address for deriving stealth addresses
+META_ADDRESS=0x02...
+
+# Private keys for recovery
+VIEW_PRIVATE_KEY=0x...
+SPEND_PRIVATE_KEY=0x...
+
+# Announcement data for recovery
+EPHEMERAL_PUBLIC_KEY=0x...
+VIEW_TAG=0x...
+```
+
+## Related Resources
+
+- [ERC-5564: Stealth Addresses](https://eips.ethereum.org/EIPS/eip-5564)
+- [ERC-6538: Stealth Meta-Address Registry](https://eips.ethereum.org/EIPS/eip-6538)
+- [Vitalik's post on stealth addresses](https://vitalik.eth.limo/general/2023/01/20/stealth.html)
+- [viem documentation](https://viem.sh)
+
+## License
+
+[GNU AGPL v3.0](LICENSE)

@@ -1,143 +1,219 @@
-import { getAddress, hexlify, keccak256, toBeArray, toUtf8Bytes } from "ethers";
-import * as secp from "@noble/secp256k1";
-import {
-  MetaAddress,
-  encodeMetaAddress,
-  parseMetaAddress,
-} from "./metaAddress";
-import { EPHEMERAL_TAG_LEN } from "./constants";
+import { getAddress, keccak256 } from 'viem'
+import * as secp from '@noble/secp256k1'
+import { parseMetaAddress } from './metaAddress'
+import { ViewTagMismatchError } from './errors'
+import { bytesToHex, hexToBytes, padHex } from './utils'
+import type { SenderDerivationResult, KeyRecoveryInput, RecoveryResult } from './types'
 
 /**
- * Helper: convert Uint8Array to hex string
+ * Computes the hash of a shared secret with a view tag
+ *
+ * @description
+ * Follows ERC-5564 specification: Keccak-256 of (32-byte shared secret || 1-byte view tag)
+ *
+ * @internal
  */
-function bytesToHex(bytes: Uint8Array): string {
-  return Array.from(bytes)
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+function hashSharedSecret(sharedSecret: Uint8Array, viewTag: Uint8Array): bigint {
+  const preimage = new Uint8Array(33)
+  preimage.set(sharedSecret, 0)
+  preimage.set(viewTag, 32)
+  return BigInt(keccak256(preimage))
 }
 
 /**
- * Helper: hash(sharedSecret || secrecy)
- * We follow EIP-5564 recommendation: Keccak-256 of
- *   (32-byte ECDH sharedSecret || 1-byte viewTag)
+ * Derives a stealth address for a recipient from their meta-address
+ *
+ * @description
+ * Implements the sender-side of ERC-5564 stealth address generation:
+ *
+ * 1. Generate a random ephemeral private key
+ * 2. Compute ephemeral public key: `ephemPub = ephemPriv * G`
+ * 3. Compute shared secret: `S = ephemPriv * viewPub` (ECDH)
+ * 4. Derive view tag: `tag = keccak256(S)[0]`
+ * 5. Compute stealth public key: `stealthPub = spendPub + hash(S || tag) * G`
+ * 6. Derive stealth address from public key
+ *
+ * The sender should:
+ * - Send funds to `stealthAddress`
+ * - Publish an announcement containing `ephemPubKey` and `viewTag`
+ *
+ * @param metaAddress - The recipient's stealth meta-address (0x-prefixed, 134 hex chars)
+ * @returns Object containing the stealth address, keys, and view tag
+ *
+ * @throws {InvalidMetaAddressError} If the meta-address format is invalid
+ *
+ * @example
+ * ```ts
+ * import { getSenderStealthAddress } from 'stealth-addresses-utils'
+ *
+ * // Alice wants to send funds to Bob
+ * const bobMetaAddress = '0x02...' // Bob's public meta-address
+ *
+ * const result = await getSenderStealthAddress(bobMetaAddress)
+ *
+ * // Send funds to this address
+ * console.log('Send to:', result.stealthAddress)
+ *
+ * // Include in announcement so Bob can find it
+ * console.log('Ephemeral pubkey:', result.ephemPubKey)
+ * console.log('View tag:', result.viewTag)
+ * ```
+ *
+ * @example
+ * ```ts
+ * // Using with viem to send a transaction
+ * import { getSenderStealthAddress, encodeAnnouncementCalldata, ANNOUNCER_SINGLETON } from 'stealth-addresses-utils'
+ * import { createWalletClient, http, parseEther } from 'viem'
+ * import { mainnet } from 'viem/chains'
+ *
+ * const client = createWalletClient({
+ *   chain: mainnet,
+ *   transport: http()
+ * })
+ *
+ * const { stealthAddress, ephemPubKey, viewTag } = await getSenderStealthAddress(recipientMetaAddress)
+ *
+ * // Send funds
+ * await client.sendTransaction({
+ *   to: stealthAddress,
+ *   value: parseEther('1.0')
+ * })
+ *
+ * // Announce (so recipient can find it)
+ * const calldata = encodeAnnouncementCalldata(ephemPubKey, recipientMetaAddress, viewTag)
+ * await client.sendTransaction({
+ *   to: ANNOUNCER_SINGLETON,
+ *   data: calldata
+ * })
+ * ```
+ *
+ * @see https://eips.ethereum.org/EIPS/eip-5564#generating-stealth-addresses
  */
-function hashSharedSecret(
-  sharedSecret: Uint8Array,
-  viewTag: Uint8Array
-): bigint {
-  const preimage = new Uint8Array(33);
-  preimage.set(sharedSecret, 0);
-  preimage.set(viewTag, 32);
-  return BigInt("0x" + keccak256(preimage).slice(2));
-}
+export function getSenderStealthAddress(metaAddress: string): SenderDerivationResult {
+  const ma = parseMetaAddress(metaAddress)
 
-/**
- * Sender-side:
- * 1. Choose random 32-byte ephemPriv
- * 2. Compute ephemPub = ephemPriv * G
- * 3. sharedSecret = ephemPriv * viewPub
- * 4. viewTag = firstByte(keccak256(sharedSecret))
- * 5. stealthPub  = spendPub + hash(sharedSecret||tag)*G
- */
-export interface SenderDerivationResult {
-  stealthAddress: string; // EOA 0x…
-  stealthPubKey: string; // compressed pubkey hex
-  viewTag: string; // 0x?? (1-byte)
-  ephemPrivKey: string; // hex ( KEEP PRIVATE! )
-  ephemPubKey: string; // compressed pubkey hex
-}
+  // 1. Generate random ephemeral private key
+  const ephemPrivBytes = secp.utils.randomPrivateKey()
+  const ephemPrivKey = padHex(bytesToHex(ephemPrivBytes), 32)
 
-/**
- * Derive the stealth EOA + viewTag for a recipient meta-address.
- */
-export async function getSenderStealthAddress(
-  metaAddrHex: string
-): Promise<SenderDerivationResult> {
-  const ma = parseMetaAddress(metaAddrHex);
+  // 2. Compute ephemeral public key
+  const ephemPubKey = bytesToHex(secp.getPublicKey(ephemPrivBytes, true))
 
-  // 1. random ephemPriv
-  const ephemPriv = secp.utils.randomPrivateKey(); // Uint8Array
-  const ephemPrivHex = "0x" + hexlify(ephemPriv).slice(2).padStart(64, "0");
+  // 3. Compute shared secret via ECDH: S = ephemPriv * viewPub
+  const viewPubBytes = hexToBytes(ma.viewPubkey)
+  const sharedSecretFull = secp.getSharedSecret(ephemPrivBytes, viewPubBytes, true)
+  // Drop the prefix byte per spec (compressed format has 0x02/0x03 prefix)
+  const sharedSecret = sharedSecretFull.slice(1) // 32 bytes
 
-  // 2. ephemPub
-  const ephemPubHex = "0x" + bytesToHex(secp.getPublicKey(ephemPriv, true));
+  // 4. Derive view tag: first byte of keccak256(sharedSecret)
+  const viewTag: `0x${string}` = `0x${keccak256(sharedSecret).slice(2, 4)}`
+  const viewTagBytes = hexToBytes(viewTag)
 
-  // 3. sharedSecret = ephemPriv * viewPub
-  const viewPubBytes = toBeArray(ma.viewPubkey);
-  const sharedSecret = secp.getSharedSecret(ephemPriv, viewPubBytes, true);
-  // drop prefix byte per spec
-  const ssStripped = sharedSecret.slice(1); // 32 bytes
+  // 5. Compute stealth public key: stealthPub = spendPub + H * G
+  // where H = hash(sharedSecret || viewTag) mod n
+  const H = hashSharedSecret(sharedSecret, viewTagBytes) % secp.CURVE.n
+  const tweakPoint = secp.ProjectivePoint.BASE.multiply(H)
+  const spendPubPoint = secp.ProjectivePoint.fromHex(ma.spendPubkey.slice(2))
+  const stealthPubPoint = spendPubPoint.add(tweakPoint)
+  const stealthPubKey = bytesToHex(stealthPubPoint.toRawBytes(true))
 
-  // 4. viewTag
-  const viewTagByte = keccak256(ssStripped).slice(2, 4);
-  const viewTag = "0x" + viewTagByte;
-  const tagBytes = toBeArray(viewTag);
-
-  // 5. stealthPub = spendPub + H*G
-  const H = hashSharedSecret(ssStripped, tagBytes) % secp.CURVE.n;
-  const tweakPoint = secp.Point.BASE.multiply(H);
-  const spendPub = secp.Point.fromHex(ma.spendPubkey.slice(2));
-  const stealthPoint = spendPub.add(tweakPoint);
-  const stealthPubCompressed = "0x" + bytesToHex(stealthPoint.toRawBytes(true));
-
-  // Ethereum address = last20( keccak256(uncompressed[1:]) )
+  // 6. Derive Ethereum address from uncompressed public key
+  // Address = last 20 bytes of keccak256(uncompressed_pubkey[1:])
   const stealthAddress = getAddress(
-    "0x" + keccak256(stealthPoint.toRawBytes(false).slice(1)).slice(-40)
-  );
+    `0x${keccak256(stealthPubPoint.toRawBytes(false).slice(1)).slice(-40)}`
+  )
 
   return {
     stealthAddress,
-    stealthPubKey: stealthPubCompressed,
+    stealthPubKey,
     viewTag,
-    ephemPrivKey: ephemPrivHex,
-    ephemPubKey: ephemPubHex,
-  };
+    ephemPrivKey,
+    ephemPubKey,
+  }
 }
 
 /**
- * Recipient-side key recovery:
- * 1. Observe announcement (ephemPub, metaAddress, ciphertext?, tag)
- * 2. sharedSecret = privView * ephemPub
- * 3. check Tag matches firstByte(keccak256(sharedSecret))
- * 4. stealthPriv = privSpend + hash(sharedSecret||tag)   (mod n)
+ * Recovers the private key for a stealth address
+ *
+ * @description
+ * Implements the recipient-side of ERC-5564 stealth address key recovery:
+ *
+ * 1. Compute shared secret: `S = viewPriv * ephemPub` (ECDH)
+ * 2. Verify view tag matches: `tag == keccak256(S)[0]`
+ * 3. Compute stealth private key: `stealthPriv = spendPriv + hash(S || tag) mod n`
+ * 4. Derive stealth address from private key
+ *
+ * @param input - The recovery parameters
+ * @returns Object containing the stealth address and private key
+ *
+ * @throws {ViewTagMismatchError} If the view tag doesn't match (announcement not for this recipient)
+ *
+ * @example
+ * ```ts
+ * import { recoverStealthPrivKey } from 'stealth-addresses-utils'
+ *
+ * // Bob sees an announcement and wants to check if it's for him
+ * const result = recoverStealthPrivKey({
+ *   viewPrivKey: bobViewPrivateKey,
+ *   spendPrivKey: bobSpendPrivateKey,
+ *   ephemPubKey: announcement.ephemPubKey,
+ *   viewTag: announcement.viewTag,
+ * })
+ *
+ * // Now Bob can spend from this address
+ * console.log('Stealth address:', result.stealthAddress)
+ * console.log('Private key:', result.stealthPrivKey)
+ * ```
+ *
+ * @example
+ * ```ts
+ * // Handling the case where announcement is not for you
+ * import { recoverStealthPrivKey, ViewTagMismatchError } from 'stealth-addresses-utils'
+ *
+ * try {
+ *   const result = recoverStealthPrivKey({ ... })
+ *   console.log('Found funds at:', result.stealthAddress)
+ * } catch (error) {
+ *   if (error instanceof ViewTagMismatchError) {
+ *     // This announcement is not for us, skip it
+ *   } else {
+ *     throw error
+ *   }
+ * }
+ * ```
+ *
+ * @see https://eips.ethereum.org/EIPS/eip-5564#parsing-stealth-addresses
  */
-export interface KeyRecoveryInput {
-  viewPrivKey: string; // recipient's private view key  (32-byte hex)
-  spendPrivKey: string; // recipient's private spend key (32-byte hex)
-  ephemPubKey: string; // taken from announcement
-  viewTag: string; // taken from announcement (0x??)
-}
+export function recoverStealthPrivKey(input: KeyRecoveryInput): RecoveryResult {
+  const viewPriv = BigInt(input.viewPrivKey)
+  const spendPriv = BigInt(input.spendPrivKey)
 
-export function recoverStealthPrivKey(input: KeyRecoveryInput): {
-  stealthAddress: string;
-  stealthPrivKey: string;
-} {
-  const viewPriv = BigInt(input.viewPrivKey);
-  const spendPriv = BigInt(input.spendPrivKey);
+  // 1. Compute shared secret: S = viewPriv * ephemPub
+  const ephemPubPoint = secp.ProjectivePoint.fromHex(input.ephemPubKey.slice(2))
+  const sharedSecret = ephemPubPoint.multiply(viewPriv).toRawBytes(true).slice(1) // 32 bytes
 
-  const ephemPubPoint = secp.Point.fromHex(input.ephemPubKey.slice(2));
-
-  // sharedSecret = viewPriv * ephemPub
-  const shared = ephemPubPoint.multiply(viewPriv).toRawBytes(true).slice(1);
-
-  // verify tag
-  const wantTag = "0x" + keccak256(shared).slice(2, 4);
-  if (wantTag.toLowerCase() !== input.viewTag.toLowerCase()) {
-    throw new Error("announcement not intended for this recipient");
+  // 2. Verify view tag
+  const expectedTag = `0x${keccak256(sharedSecret).slice(2, 4)}`
+  if (expectedTag.toLowerCase() !== input.viewTag.toLowerCase()) {
+    throw new ViewTagMismatchError(expectedTag, input.viewTag)
   }
 
-  const H = hashSharedSecret(shared, toBeArray(input.viewTag)) % secp.CURVE.n;
-  const stealthPriv = (spendPriv + H) % secp.CURVE.n;
+  // 3. Compute stealth private key: stealthPriv = spendPriv + H mod n
+  const viewTagBytes = hexToBytes(input.viewTag)
+  const H = hashSharedSecret(sharedSecret, viewTagBytes) % secp.CURVE.n
+  const stealthPriv = (spendPriv + H) % secp.CURVE.n
 
-  const stealthPrivHex = "0x" + stealthPriv.toString(16).padStart(64, "0");
-  // derive address for consistency
-  const pub = secp.getPublicKey(stealthPrivHex.slice(2), true);
-  const addr = getAddress(
-    "0x" +
-      keccak256(
-        secp.getPublicKey(stealthPrivHex.slice(2), false).slice(1)
-      ).slice(-40)
-  );
+  const stealthPrivKey = padHex(`0x${stealthPriv.toString(16)}`, 32)
 
-  return { stealthPrivKey: stealthPrivHex, stealthAddress: addr };
+  // 4. Derive address for verification
+  const stealthPubBytes = secp.getPublicKey(stealthPrivKey.slice(2), false)
+  const stealthAddress = getAddress(`0x${keccak256(stealthPubBytes.slice(1)).slice(-40)}`)
+
+  return {
+    stealthPrivKey,
+    stealthAddress,
+  }
 }
+
+// Re-export types for convenience
+export type { SenderDerivationResult, KeyRecoveryInput, RecoveryResult } from './types'

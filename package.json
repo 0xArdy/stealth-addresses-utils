@@ -1,19 +1,73 @@
 {
-  "name": "erc-5564-ts",
-  "private": true,
-  "version": "0.0.1",
-  "license": "MIT",
-  "dependencies": {
-    "@noble/secp256k1": "^2.2.0",
-    "dotenv": "^17.2.0",
-    "ethers": "^6.10.0",
-    "ts-node": "^10.9.2"
+  "name": "stealth-addresses-utils",
+  "version": "0.1.0",
+  "description": "TypeScript implementation of ERC-5564 Stealth Addresses for Ethereum privacy. Type-safe APIs for meta-address creation, stealth derivation, and key recovery.",
+  "license": "AGPL-3.0-only",
+  "author": "0xArdy",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/0xArdy/stealth-addresses-utils.git"
   },
+  "homepage": "https://github.com/0xArdy/stealth-addresses-utils#readme",
+  "bugs": {
+    "url": "https://github.com/0xArdy/stealth-addresses-utils/issues"
+  },
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "sideEffects": false,
   "scripts": {
-    "build": "tsc -p .",
-    "demo": "ts-node ./scripts/demo.ts",
-    "recover": "ts-node ./scripts/recover.ts",
-    "create-sma": "ts-node ./scripts/createSma.ts",
-    "create-stealth": "ts-node ./scripts/createStealth.ts"
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint src --ext .ts",
+    "lint:fix": "eslint src --ext .ts --fix",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\"",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "pnpm run build",
+    "demo": "tsx ./scripts/demo.ts",
+    "recover": "tsx ./scripts/recover.ts",
+    "create-sma": "tsx ./scripts/createSma.ts",
+    "create-stealth": "tsx ./scripts/createStealth.ts"
+  },
+  "dependencies": {
+    "@noble/secp256k1": "2.2.0",
+    "viem": "2.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.10.0",
+    "@typescript-eslint/eslint-plugin": "8.18.0",
+    "@typescript-eslint/parser": "8.18.0",
+    "@vitest/coverage-v8": "2.1.0",
+    "dotenv": "17.2.0",
+    "eslint": "9.39.2",
+    "prettier": "3.4.0",
+    "tsup": "8.3.0",
+    "tsx": "4.19.0",
+    "typescript": "5.9.2",
+    "vitest": "2.1.0"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }
